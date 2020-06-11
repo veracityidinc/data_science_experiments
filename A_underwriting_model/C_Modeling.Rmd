@@ -1,0 +1,86 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(message=FALSE, warning=FALSE, include=FALSE)
+## Download, install in HDD (if not already) and load (in RAM) the following required packages (libraries)
+## Assign to a list the string names of required packages
+list.of.packages <- c("RcppRoll",
+                      "caret",
+                      "tidyquant",
+                      "DMwR",
+                      "corrr",
+                      "tidyverse", 
+                      "lubridate")   
+   
+## Check list of required packages against alreday "instralled.packages" to decypher which (if any) should be downloaded and installed
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+## if indeed new packages list is not empty proceed in downloading missing packages
+if(length(new.packages)) install.packages(new.packages)
+## Load all necessary packages
+lapply(list.of.packages, require, character.only = TRUE) 
+
+
+load("~/OneDrive/A.VeracityID/Project_26_scores/A_data_prep.RData")
+portion       <- createDataPartition(data$target, p = 0.9, list=FALSE)
+data.cv       <- data[portion,]  # 80% of the initial data on which to perform model selection 
+data.evaluate <- data[-portion,] # 20% of the initial data on which to evaluate our decision in a situation as close as it can get to reality
+```
+
+
+
+```{r}
+
+##The completely dummy (no input) model would be the prediction of most frequent target variable class, namely "0" No Heart Disease Issue.
+dummy_model_acc = round(max(nrow(data.cv[data.cv$target=="X.1",]), nrow(data.cv[data.cv$target=="X.0",]))/nrow(data.cv),4)
+
+start <- Sys.time()
+
+## Set up seed for results reproducibility
+set.seed(45)
+
+
+fitControl <- trainControl(## 10-fold CV
+                           method = "repeatedcv",
+                           number = 5,
+                           ## repeated ten times
+                           repeats = 1)
+# tune.gridcart <- expand.grid(maxdepth = 1:10)
+# 
+# dec.tree  <- caret::train(target ~ .,
+#                    data = data.cv, 
+#                    method ="glm",
+#                    trControl = fitControl,
+#                    family = "binomial",
+#                    #tuneGrid =tune.gridcart,
+#                    metric = "Accuracy")
+# dec.tree$results
+
+
+tune.grid <- expand.grid(eta = c(0.01, 0.05, 0.1),  
+                      nrounds = c(50, 75, 100,125, 150), 
+                      max_depth = 1:20,
+                      min_child_weight = 1, 
+                      colsample_bytree = 1,
+                      gamma = 0, 
+                      subsample = 1)  
+
+
+system.time (xgb <- train(target ~ ., 
+                                 data      = data.cv, 
+                                 method    = "xgbTree", 
+                                 tuneGrid  = tune.grid,
+                                 trControl = fitControl, 
+                                 metric    = "Accuracy"
+            ))
+
+plot(xgb)
+
+```
+
+

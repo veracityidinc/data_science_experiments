@@ -1,0 +1,666 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+rm(list = ls())
+setwd("~/Projects/A.VeracityID/Project_26_scores")
+knitr::opts_chunk$set(message=FALSE, warning = FALSE)
+## Download, install in HDD (if not already) and load (in RAM) the following required packages (libraries)
+## Assign to a list the string names of required packages
+list.of.packages <- c("RcppRoll",
+                      "tidyverse",
+                      "readxl",
+                      "lubridate")   
+   
+## Check list of required packages against alreday "instralled.packages" to decypher which (if any) should be downloaded and installed
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+## if indeed new packages list is not empty proceed in downloading missing packages
+if(length(new.packages)) install.packages(new.packages)
+
+## Load all necessary packages
+lapply(list.of.packages, require, character.only = TRUE)  
+```
+
+### Issues:
+  1st batch outputs a single row for a unique quote number attending to the following:
+  
+  * Names, types and Format Standardization
+  * Critical Missing values in principal_id, quote_id names etc
+  * Different transaction dates for unique quote_numbers (covered duplicate records)
+  * Different (mostly duplicates) recordings of Rules for a single quote
+  * fake names
+  * birth dates not good
+  * NOT attended: link policies to prior policies
+  * Names Standardisation
+  
+```{r}
+st <- Sys.time()
+#GLOBAL VARIABLES
+EARLY = 60
+###########################################################################################
+idF0 <- read_csv("~/OneDrive/A.VeracityID/Data/VeracityID/idFusion_quotation.csv")
+########################## Step 0: attend to reach a single quote number per row  #########
+
+
+
+
+idF0 <- idF0 %>%
+  ## Standardise names
+  rename(quote_number = submission_uuid,
+         rule_name = string_agg) %>%
+  ## Standardise variable types and formats
+  ## Fix Quotes (pad with leading 0s, remove quotes with repteaded rules)
+  mutate(quote_number = as.numeric(quote_number),
+         quote_number = str_pad(quote_number, 10, pad = "0"),
+         quote_number = as.character(quote_number),
+         policy_number = as.numeric(policy_number),
+         policy_number = str_pad(policy_number, 10, pad = "0"),
+         policy_number = as.character(policy_number)) %>%
+  ## One quote per row
+  mutate(
+    first_name = str_squish(first_name),
+    first_name = tolower(first_name),
+    last_name = str_squish(last_name),
+    last_name = tolower(last_name),
+    brth_dt = as.Date(brth_dt, "%Y-%m-%d")
+  ) %>%
+  unite("Driver_ID", 7:9, remove = TRUE, sep = "_") %>%
+  group_by(quote_number) %>%
+  summarize(
+    transaction_date = max(transaction_date),
+    object_type = unique(object_type),
+    policy_number = unique(policy_number),
+    principal_id = unique(principal_id),
+    pol_eff_dt = unique(pol_eff_dt),
+    rule_name = paste(unique(unlist(
+      strsplit(rule_name, ",")
+    )), collapse = ","),
+    rule_name = gsub("NA|TRUE", "", rule_name),
+    number_of_drivers = n_distinct(Driver_ID)
+  ) %>%
+  ungroup() %>%
+  ## Remove lines with no quote numbers / principal ids and principal ids that did not purchase any policy
+  filter(!is.na(quote_number) & !is.na(principal_id)) %>%
+  arrange(principal_id, transaction_date) %>%
+  group_by(principal_id) %>%
+  mutate(
+    pol_per_principalID = n_distinct(policy_number, na.rm = TRUE),
+    quote_index = row_number(),
+    object_type1 = lag(object_type,1),
+    flag = ifelse((object_type=="Q" & object_type1=="P") | (object_type=="P" & object_type1=="P"),1,0),
+    flag = ifelse(is.na(flag),0,flag), 
+    idx = cumsum(flag) +1
+    ) %>%
+  select(-object_type1,-flag) %>%
+  filter(!pol_per_principalID == 0) %>%
+  ungroup()
+
+```
+
+### Rules 
+
+  * Add which rules were triggered for each quote/policy
+  * Add which and how many rules were triggered during each policy's quotation period
+  * Add all the rules past
+  
+```{r}
+
+idF1 <- idF0 %>%
+  distinct() %>%
+  ## Add Rules per quote
+  mutate(
+    MDA_001 = ifelse(is.na(str_count(rule_name, "MDA-001")), 0, ifelse(str_count(rule_name, "MDA-001") == 0, 0, 1)),
+    MDA_002 = ifelse(is.na(str_count(rule_name, "MDA-002")), 0, ifelse(str_count(rule_name, "MDA-002") == 0, 0, 1)),
+    MDA_003 = ifelse(is.na(str_count(rule_name, "MDA-003")), 0, ifelse(str_count(rule_name, "MDA-003") == 0, 0, 1)),
+    MDA_004 = ifelse(is.na(str_count(rule_name, "MDA-004")), 0, ifelse(str_count(rule_name, "MDA-004") == 0, 0, 1)),
+    MDA_005 = ifelse(is.na(str_count(rule_name, "MDA-005")), 0, ifelse(str_count(rule_name, "MDA-005") == 0, 0, 1)),
+    MDA_006 = ifelse(is.na(str_count(rule_name, "MDA-006")), 0, ifelse(str_count(rule_name, "MDA-006") == 0, 0, 1)),
+    #MDA_008 = ifelse(is.na(str_count(rule_name, "MDA-008")),0,ifelse(str_count(rule_name, "MDA-008")==0,0,1)),
+    MDA_012 = ifelse(is.na(str_count(rule_name, "MDA-012")), 0, ifelse(str_count(rule_name, "MDA-012") == 0, 0, 1)),
+    MDA_013 = ifelse(is.na(str_count(rule_name, "MDA-013")), 0, ifelse(str_count(rule_name, "MDA-013") == 0, 0, 1)),
+    MDA_016 = ifelse(is.na(str_count(rule_name, "MDA-016")), 0, ifelse(str_count(rule_name, "MDA-016") == 0, 0, 1)),
+    MDA_017 = ifelse(is.na(str_count(rule_name, "MDA-017")), 0, ifelse(str_count(rule_name, "MDA-017") == 0, 0, 1)),
+    MDA_019 = ifelse(is.na(str_count(rule_name, "MDA-019")), 0, ifelse(str_count(rule_name, "MDA-019") == 0, 0, 1))
+  ) %>%
+  mutate(
+    rules_sum = rowSums(select(., contains("MDA_")))
+  ) %>%
+  ##string_agg not required anymore
+  select(-rule_name) %>%
+  ungroup() %>%
+  group_by(principal_id, idx) %>%
+  mutate(quotation_period_length = round(as.numeric(difftime(max(transaction_date), min(transaction_date), units="days")),2),
+         quotes_per_quotation_period = n())
+```
+
+
+
+### Create rules ... history
+  * Compute cumulative sum per principa id
+  * Remove all quotes and keep policy purchases
+  * Subtract each policies history from the previous one history to retain for each policy the histrory captured during quotation period
+  
+
+```{r}
+
+idF2 <- idF1 %>%
+  arrange(principal_id, transaction_date) %>%
+  group_by(principal_id) %>%
+  mutate_at(
+    vars(MDA_001, MDA_002, MDA_003, MDA_004, MDA_005, MDA_006, MDA_012, MDA_013, MDA_016, MDA_017, MDA_019, rules_sum), list(prior = function(x, na.rm = FALSE) cumsum(x))
+  ) %>%
+  arrange(principal_id,  transaction_date) %>%
+  filter(!is.na(policy_number)) %>%
+  group_by(principal_id) %>%
+  arrange(principal_id, transaction_date) %>%
+  mutate_at(
+    vars(quote_index, MDA_001_prior, MDA_002_prior, MDA_003_prior, MDA_004_prior, MDA_005_prior, MDA_006_prior, MDA_012_prior, MDA_013_prior, MDA_016_prior, MDA_017_prior, MDA_019_prior, rules_sum_prior), list(`A` = function(x, na.rm = FALSE) x - lag(x, 1))
+  )  %>%
+  mutate(
+    quote_index = ifelse(is.na(quote_index_A), quote_index, quote_index_A),
+    MDA_001_prior = ifelse(is.na(MDA_001_prior_A), MDA_001_prior, MDA_001_prior_A),
+    MDA_002_prior = ifelse(is.na(MDA_002_prior_A), MDA_002_prior, MDA_002_prior_A),
+    MDA_003_prior = ifelse(is.na(MDA_003_prior_A), MDA_003_prior, MDA_003_prior_A),
+    MDA_004_prior = ifelse(is.na(MDA_004_prior_A), MDA_004_prior, MDA_004_prior_A),
+    MDA_005_prior = ifelse(is.na(MDA_005_prior_A), MDA_005_prior, MDA_005_prior_A),
+    MDA_006_prior = ifelse(is.na(MDA_006_prior_A), MDA_006_prior, MDA_006_prior_A),
+    #MDA_008_prior = ifelse(is.na(MDA_008_prior_A), MDA_008, MDA_008_prior_A),
+    MDA_012_prior = ifelse(is.na(MDA_012_prior_A), MDA_012_prior, MDA_012_prior_A),
+    MDA_013_prior = ifelse(is.na(MDA_013_prior_A), MDA_013_prior, MDA_013_prior_A),
+    MDA_016_prior = ifelse(is.na(MDA_016_prior_A), MDA_016_prior, MDA_016_prior_A),
+    MDA_017_prior = ifelse(is.na(MDA_017_prior_A), MDA_017_prior, MDA_017_prior_A),
+    MDA_019_prior = ifelse(is.na(MDA_019_prior_A), MDA_019_prior, MDA_019_prior_A),
+    rules_sum_prior =  ifelse(is.na(rules_sum_prior_A), rules_sum_prior, rules_sum_prior_A)
+  ) %>%
+  select(-ends_with("_A")) %>%
+  ## Add total history per principal_id
+  mutate_at(
+    vars(quote_index, MDA_001_prior, MDA_002_prior, MDA_003_prior, MDA_004_prior, MDA_005_prior, MDA_006_prior, MDA_012_prior, MDA_013_prior, MDA_016_prior, MDA_017_prior, MDA_019_prior, rules_sum_prior), list(`total` = function(x, na.rm = FALSE) cumsum(x) - x)
+  ) %>%
+  ungroup()
+
+```
+
+
+### Add other historical elements
+  * Prior policies count
+  * OED
+  * Time with company
+  * Time since previous purchase
+  
+
+```{r}
+
+idF3 <- idF2 %>%
+  ## Fix Date
+  separate(transaction_date, into = c("transaction_date", NA), sep = " ", remove = TRUE) %>%
+  
+  ## Add historical data available at the point of sale
+  group_by(principal_id) %>%
+  mutate(
+    OED = min(pol_eff_dt),
+    Time_with_Company = as.numeric(difftime(pol_eff_dt, OED, units = "days")),
+    Time_since_previous_policy_purchase = ifelse(is.na(Time_with_Company - lag(Time_with_Company, 1)), 0, Time_with_Company - lag(Time_with_Company, 1)),
+    prior_policies_count = row_number() - 1
+  ) %>%
+  ungroup() %>%
+  mutate(
+    pol_eff_period = floor_date(pol_eff_dt, "halfyear"),
+    OED_period = floor_date(OED, "halfyear")
+  ) 
+
+idF <- idF3
+
+Sys.time() -st
+rm(idF1,idF0,idF2, idF3, list.of.packages,new.packages,st)
+```
+
+
+
+```{r message=FALSE, warning=FALSE}
+
+claims <-
+  read_csv(
+    "~/OneDrive/A.VeracityID/Data/Metlife/MDA_Data_201910/MDA_Aggregate_Claims_20191008.csv"
+  )
+
+
+claims <-
+  claims %>%
+  mutate(
+    LOSS_DT = as.Date(LOSS_DT, "%m/%d/%Y"),
+    ORIG_EFF_DT = as.Date(ORIG_EFF_DT, "%m/%d/%Y"),
+    DIFF_TIME = difftime(LOSS_DT, ORIG_EFF_DT, units = "days"),
+    early_claims_flag = ifelse(DIFF_TIME <= EARLY, 1, 0),
+    early_claims_amount = ifelse(DIFF_TIME <= EARLY, PD_LOSS, 0)
+  ) %>%
+  filter(
+    !CLM_SYMB_DSCR == "BODILY INJURY LIABILITY"                &
+      !CLM_SYMB_DSCR == "COLLISION - MULTIPLE CAR"             &
+      !CLM_SYMB_DSCR == "UNINSURED-BODILY INJURY"              &
+      !CLM_SYMB_DSCR == "MEDICAL - BASIC"                      &
+      !CLM_SYMB_DSCR == "STRUCK ANIMAL"                        &
+      !CLM_SYMB_DSCR == "MEDICAL PAYMENTS"                     &
+      !CLM_SYMB_DSCR == "RENTAL REIMBURSEMENT"                 &
+      !CLM_SYMB_DSCR == "HAIL"                                 &
+      !CLM_SYMB_DSCR == "FLOOD"                                &
+      !CLM_SYMB_DSCR == "PROPERTY DAMAGE - RENTAL"             &
+      !CLM_SYMB_DSCR == "GLASS BREAKAGE"                       &
+      !CLM_SYMB_DSCR == "ROADSIDE ASSISTANCE"                  &
+      !CLM_SYMB_DSCR == "COVERAGE PLUS RENTAL"                 &
+      !CLM_SYMB_DSCR == "FIRE"                                 &
+      !CLM_SYMB_DSCR == "WINDSTORM / HAIL"                     &
+      !CLM_SYMB_DSCR == "LEASE AND LOAN GAP COVERAGE"          &
+      !CLM_SYMB_DSCR == "MEDICAL - EXCESS"                     &
+      !CLM_SYMB_DSCR == "TOWING"                               &
+      !CLM_SYMB_DSCR == "SURVIVORS BENEFITS - EXCESS"          &
+      !CLM_SYMB_DSCR == "SURVIVORS BENEFITS - BASIC"           &
+      !CLM_SYMB_DSCR == "ICE"                                  &
+      !CLM_SYMB_DSCR == "UNDERINSURED POTENTIAL"               &
+      !CLM_SYMB_DSCR == "POTENTIAL NO FAULT"                   &
+      !CLM_SYMB_DSCR == "POTENTIAL PROPERTY DAMAGE"            &
+      !CLM_SYMB_DSCR == "POTENTIAL BI-NO FAULT STATES ONLY"    &
+      !CLM_SYMB_DSCR == "POTENTIAL RESIDUAL UNINS MOTORIST"    &
+      !CLM_SYMB_DSCR == "FUNERAL BENEFITS - BASIC"             &
+      !CLM_SYMB_DSCR == "FUNERAL BENEFITS - BASIC"             &
+      !CLM_SYMB_DSCR == "FUNERAL BENEFITS - BASIC"
+  ) %>%
+  group_by(EXT_POL_SFX_CONCAT_CD) %>%
+  mutate(
+    claims_count = n_distinct(CLM_NUM),
+    early_claims_count = sum(early_claims_flag),
+    claims_amount = sum(PD_LOSS, na.rm = TRUE),
+    early_claims_amount = sum(early_claims_amount, na.rm = TRUE),
+    soonest_claim = min(DIFF_TIME),
+    average_claim_time = mean(DIFF_TIME, na.rm = TRUE),
+    ORIG_EFF_DT = unique(ORIG_EFF_DT),
+    state = unique(ISS_ST_ALPHA_CD),
+    vandalism = ifelse(CLM_SYMB_DSCR == "VANDALISM", 1, 0),
+    collision_one_car = ifelse(CLM_SYMB_DSCR == "COLLISION - ONE CAR", 1, 0),
+    property_damage = ifelse(
+      CLM_SYMB_DSCR == "PROPERTY DAMAGE LIABILITY" | CLM_SYMB_DSCR == "PROPERTY DAMAGE DIMINISHED VALUE", 1, 0),
+    theft = ifelse(CLM_SYMB_DSCR == "TOTAL THEFT" | CLM_SYMB_DSCR == "PARTIAL THEFT", 1, 0 ),
+    all_other = ifelse(CLM_SYMB_DSCR == "ALL OTHER", 1, 0),
+    uninsured = ifelse(
+      CLM_SYMB_DSCR == "UNINSURED PROPERTY DAMAGE" |
+        CLM_SYMB_DSCR == "UNDERINSURED MOTORIST",
+      1,
+      0
+    ),
+    loss_earnings = ifelse(CLM_SYMB_DSCR == "LOSS OF EARNINGS - BASIC" , 1, 0),
+    col_diminished_value = ifelse(CLM_SYMB_DSCR == "COL- DIMINISHED VALUE", 1, 0),
+    loss_services = ifelse(CLM_SYMB_DSCR == "LOSS OF SERVICES - BASIC", 1, 0),
+    pip_beni = ifelse(CLM_SYMB_DSCR == "PIP BENI FOR NON-RES OF NO-FAULT ST", 1, 0),
+    personal_effects = ifelse(CLM_SYMB_DSCR == "PERSONAL EFFECTS", 1, 0),
+    comp_diminished_value = ifelse(CLM_SYMB_DSCR == "COMP DIMINISHED VALUE", 1, 0)
+  ) %>%
+  group_by(EXT_POL_SFX_CONCAT_CD) %>%
+  summarise(
+    claims_count = unique(claims_count),
+    early_claims_count = unique(early_claims_count),
+    claims_amount = unique(claims_amount),
+    early_claims_amount = unique(early_claims_amount),
+    soonest_claim  = unique(soonest_claim),
+    average_claim_time = unique(average_claim_time),
+    inception_dt = unique(ORIG_EFF_DT),
+    state = unique(state),
+    vandalism = max(vandalism),
+    collision_one_car = max(collision_one_car),
+    property_damage = max(property_damage),
+    theft = max(theft),
+    all_other = max(all_other),
+    uninsured = max(uninsured),
+    loss_earnings = max(loss_earnings),
+    col_diminished_value = max(col_diminished_value),
+    loss_services = max(loss_services),
+    pip_beni = max(pip_beni),
+    personal_effects = max(personal_effects),
+    comp_diminished_value = max(comp_diminished_value)
+  ) %>%
+  rename(policy_number = EXT_POL_SFX_CONCAT_CD) %>%
+  mutate(policy_number = as.numeric(policy_number)) %>%
+  mutate(policy_number = str_pad(policy_number, 10, pad = "0")) %>%
+  mutate(policy_number = as.character(policy_number))
+
+claims <- idF[, c(5, 4, 2)] %>%
+  left_join(claims, by = "policy_number") %>%
+  select(-inception_dt, -state) %>%
+  mutate_at(
+    vars(
+      claims_count,
+      claims_amount,
+      early_claims_count,
+      early_claims_amount,
+      vandalism,
+      collision_one_car,
+      property_damage,
+      theft,
+      all_other,
+      uninsured,
+      loss_earnings,
+      col_diminished_value,
+      loss_services,
+      pip_beni,
+      personal_effects,
+      comp_diminished_value
+    ),
+    ~ replace_na(., 0)
+  ) %>%
+  mutate_at(vars(soonest_claim, average_claim_time),
+            ~ replace_na(., 10000)) %>%
+  group_by(principal_id) %>%
+  mutate_at(vars(claims_count,
+      claims_amount,
+      early_claims_count,
+      early_claims_amount,
+      vandalism,
+      collision_one_car,
+      property_damage,
+      theft,
+      all_other,
+      uninsured,
+      loss_earnings,
+      col_diminished_value,
+      loss_services,
+      pip_beni,
+      personal_effects,
+      comp_diminished_value
+    ),
+    list(prior = function(x, na.rm = FALSE) cumsum(x) - x)) %>%
+  select(-c(9:21))
+```
+
+### Quote manipulation
+
+```{r message=FALSE, warning=FALSE}
+qm_dd <- read_csv("~/OneDrive/A.VeracityID/Data/VeracityID/quote_manipualtion/policies_with_drop_drivers.csv") %>%
+  dplyr::rename(policy_number = p.pol_number) %>%
+  mutate(policy_number = as.numeric(policy_number)) %>%
+  mutate(policy_number = str_pad(policy_number, 10, pad = "0")) %>%
+  mutate(policy_number = as.character(policy_number)) %>%
+  mutate(mising = gsub("\\[|\\]", "", mising, perl=T)) %>%
+  mutate(mising = str_trim(mising)) %>%
+  mutate(QM_DD  = str_count(mising, ',')) %>%
+  mutate(QM_DD  = ifelse(QM_DD==0,0,QM_DD+1)) %>%
+  mutate(QM_DD  = ifelse(mising=="", 0, ifelse(QM_DD == 0, 1, QM_DD))) %>%
+  select(c(1,9)) %>%
+  group_by(policy_number) %>%
+  dplyr::summarize(QM_DD = sum(QM_DD,na.rm=TRUE)) %>%
+  mutate(QM_DD = ifelse(QM_DD>0,1,0))
+
+qm_da <- read_csv("~/OneDrive/A.VeracityID/Data/VeracityID/quote_manipualtion/policies_with_drop_addreses.csv") %>%
+  dplyr::rename(policy_number   = p.pol_number)                      %>%
+  mutate(policy_number   = as.numeric(policy_number))             %>%
+  mutate(policy_number   = str_pad(policy_number, 10, pad = "0")) %>%
+  mutate(policy_number   = as.character(policy_number))           %>%
+  mutate(mising = gsub("\\[|\\]", "", mising, perl=T))    %>%
+  mutate(mising = str_trim(mising))                       %>%
+  mutate(QM_DA  = str_count(mising, ','))                 %>%
+  mutate(QM_DA  = ifelse(QM_DA==0,0,QM_DA+1))             %>%
+  mutate(QM_DA  = ifelse(mising=="",0,ifelse(QM_DA==0,1,QM_DA)))  %>%
+  select(c(1,9)) %>%
+  group_by(policy_number) %>%
+  dplyr::summarize(QM_DA = sum(QM_DA,na.rm=TRUE))%>%
+  mutate(QM_DA = ifelse(QM_DA>0,1,0))
+
+
+
+qm_dv <- read_csv("~/OneDrive/A.VeracityID/Data/VeracityID/quote_manipualtion/policies_with_drop_vehicles.csv") %>%
+  dplyr::rename(policy_number   = p.pol_number)               %>%
+  mutate(policy_number   = as.numeric(policy_number))             %>%
+  mutate(policy_number   = str_pad(policy_number, 10, pad = "0")) %>%
+  mutate(policy_number   = as.character(policy_number))           %>%
+  mutate(mising = gsub("\\[|\\]", "", mising, perl=T))    %>%
+  mutate(mising = str_trim(mising))                       %>%
+  mutate(QM_DV  = str_count(mising, ','))                 %>%
+  mutate(QM_DV  = ifelse(QM_DV==0,0,QM_DV+1))             %>%
+  mutate(QM_DV  = ifelse(mising=="",0,ifelse(QM_DV==0,1,QM_DV)))  %>%
+  select(c(1,9)) %>%
+  group_by(policy_number) %>%
+  dplyr::summarize(QM_DV = sum(QM_DV,na.rm=TRUE))%>%
+  mutate(QM_DV = ifelse(QM_DV,1,0))
+
+qm_sc <- read_csv("~/OneDrive/A.VeracityID/Data/VeracityID/quote_manipualtion/policies_that_have_a_quote_with_salvage_or_commercial.csv") %>%
+  dplyr::rename(policy_number   = p.pol_number)                      %>%
+  mutate(policy_number   = as.numeric(policy_number))             %>%
+  mutate(policy_number   = str_pad(policy_number, 10, pad = "0")) %>%
+  mutate(policy_number   = as.character(policy_number))           %>%
+  mutate(QM_SC = ifelse(r.mda_003==1|r.mda_006==1,1,0))      %>%
+  select(c(1,5)) %>%
+  group_by(policy_number) %>%
+  dplyr::summarise(QM_SC = 1)
+
+idF1 <- idF %>%
+  left_join(qm_da, by = "policy_number") %>%
+  left_join(qm_dd, by = "policy_number") %>%
+  left_join(qm_dv, by = "policy_number") %>%
+  left_join(qm_sc, by = "policy_number") %>%
+  mutate_at(vars(QM_DA,QM_DD,QM_DV,QM_SC),~ replace_na(., 0))
+  
+  
+idF <- idF1 
+rm(qm_da,qm_dd,qm_dv,qm_sc, idF1)
+```
+
+
+### Cancellation 
+
+```{r}
+mda_c1 <- read_csv("~/OneDrive/A.VeracityID/Data/Metlife/MDA_policies_cancellations_data/mda_cncl_2020.csv", 
+    col_types = cols(EFF_DT = col_character(), 
+        EXT_POL_SFX_CONCAT_CD = col_character(), 
+        PROC_DT = col_character()))
+
+
+mda_c2 <- read_csv("~/OneDrive/A.VeracityID/Data/Metlife/MDA_policies_cancellations_data/mda_cncl_2019.csv", 
+    col_types = cols(EFF_DT = col_character(), 
+        EXT_POL_SFX_CONCAT_CD = col_character(), 
+        PROC_DT = col_character()))
+
+mda_c3 <- read_csv("~/OneDrive/A.VeracityID/Data/Metlife/MDA_policies_cancellations_data/mda_cncl_20161718.csv", 
+    col_types = cols(EFF_DT = col_character(), 
+        EXT_POL_SFX_CONCAT_CD = col_character(), 
+        PROC_DT = col_character()))
+
+cancel <- rbind(mda_c1, mda_c2, mda_c3)  %>%
+  select(c(1,2,5,9,10,11,12,14))              %>%
+  rename(policy_number = EXT_POL_SFX_CONCAT_CD,
+         LOB = INCM_STMT_LOB_CD, 
+         Cancellation_Date = PROC_DT)    %>%
+  mutate(policy_number = as.numeric(policy_number))             %>%
+  mutate(policy_number = str_pad(policy_number, 10, pad = "0")) %>%
+  mutate(policy_number = as.character(policy_number))           %>%
+  mutate(Cancellation_Date = as.Date(Cancellation_Date, "%Y-%m-%d"),
+         LOB = ifelse(LOB=="A","Auto",LOB),
+         LOB = ifelse(LOB=="H","Home",LOB),
+         LOB = ifelse(LOB=="O","Other",LOB))   %>%
+  distinct()  %>%
+  arrange(policy_number, Cancellation_Date)  %>%
+  group_by(policy_number) %>%
+  summarise(Cancellation_Date = max(Cancellation_Date),
+            cancellations_count = n())
+rm(mda_c1,mda_c2,mda_c3)
+
+idF1 <- idF %>%
+  left_join(cancel, by = "policy_number")  %>%
+  mutate(Cancellation = ifelse(is.na(Cancellation_Date), 0, 1),
+         Cancellation_Date = as.Date(as.character(ifelse(is.na(Cancellation_Date), "2020-04-15", as.character(Cancellation_Date))), "%Y-%m-%d"))  %>%
+  mutate(Duration = as.numeric(difftime(Cancellation_Date, OED, "days"))/86400) %>%
+  mutate_at(vars(cancellations_count),~ replace_na(., 0)) %>%
+  arrange(principal_id,transaction_date)  %>%
+  group_by(principal_id) %>%
+  mutate(prior_cancellations_count = cumsum(cancellations_count),
+         prior_cancellations_count = lag(prior_cancellations_count,1),
+         prior_cancellations_count = ifelse(is.na(prior_cancellations_count),0,prior_cancellations_count),
+         Linked_Policies_Cancellations = cumsum(Cancellation),
+         Linked_Policies_Cancellations = lag(Linked_Policies_Cancellations,1),
+         Linked_Policies_Cancellations = ifelse(is.na(Linked_Policies_Cancellations),0,Linked_Policies_Cancellations),
+         p1 = cumsum(Duration),
+         p1 = lag(p1,1),
+         p2 = lag(row_number(),1),
+         flaga = ifelse(as.numeric(difftime(pol_eff_dt, lag(Cancellation_Date,1), units("days")))>0,1,0),
+         flaga = ifelse(is.na(flaga),0,flaga), 
+         prior_cancellations_count = ifelse(flaga == 0, 0, prior_cancellations_count),
+         Linked_Policies_Cancellations = ifelse(flaga == 0, 0, Linked_Policies_Cancellations )) %>%
+  rowwise() %>%
+  mutate(past_average_duration = ifelse(is.na(p2),NA,p1/p2)) %>%
+  ungroup() %>%
+  mutate(past_average_duration = ifelse(is.na(past_average_duration), mean(Duration, na.rm = TRUE), past_average_duration)) %>%
+  select(-p1,-p2, -flaga)
+
+x <- idF1[,c(1:10,50:ncol(idF1))]
+
+idF <- idF1
+
+rm(cancel, idF1)
+```
+
+### Premiums, External risk metrics, demographics
+
+```{r}
+other <- read_csv("~/OneDrive/A.VeracityID/Data/Metlife/MDA_Data_201910/MDALossResults ITD 201909 v1.csv")  %>%
+    rename(policy_number = plcynum,
+           Premium_Written = NBWP) %>%
+    mutate(policy_number = as.numeric(policy_number))                                     %>%
+    mutate(policy_number = str_pad(policy_number, 10, pad = "0"))                         %>%
+    mutate(policy_number = as.character(policy_number))                                   %>%
+    select(1,9,10,11,13,14,15,16,17,27,28,31)
+  
+
+
+other <- idF[,c(5,4,10)] %>%
+  ungroup()%>%
+  left_join(other, by = "policy_number") %>%
+  mutate_at(vars(TOTAL_ACCIDENTS, TOTAL_VIOLATIONS, TOTAL_MVR), ~ replace_na(., 0)) %>%
+  filter(!is.na(STATE.GROUP)) %>%
+  group_by(principal_id) %>%
+  mutate_at(vars(Premium_Written), list(prior = function(x, na.rm = FALSE) cumsum(x) - x))
+
+```
+
+
+
+
+
+
+```{r}
+clu <- read_csv("~/OneDrive/A.VeracityID/Data/VeracityID/mda_clu_claims.csv") %>%
+  select(2,5,6) %>%
+  rename(policy_number = policy_num)
+
+clu <- idF[,c(5,4,10)] %>%
+  left_join(clu, by = "policy_number") %>%
+  group_by(principal_id) %>%
+  mutate_at(vars(clu_drv_claims, clu_veh_claims), list(prior = function(x, na.rm = FALSE) cumsum(x) - x))
+
+
+siu <- read_csv("~/OneDrive/A.VeracityID/Data/VeracityID/siu.csv") %>%
+  rename(policy_number = Policy_Nr) %>%
+  mutate(policy_number = as.numeric(policy_number)) %>%
+  mutate(policy_number = str_pad(policy_number, 10, pad = "0")) %>%
+  mutate(policy_number = as.character(policy_number)) %>%
+  group_by(policy_number) %>%
+  summarise(siu_flags_count = n())
+  
+siu <- idF[,c(5,4,10)] %>%
+  left_join(siu, by = "policy_number") %>%
+  group_by(principal_id) %>%
+  mutate_at(vars(siu_flags_count), ~ replace_na(., 0)) %>%
+  mutate_at(vars(siu_flags_count), list(prior = function(x, na.rm = FALSE) cumsum(x) - x))
+  
+```
+
+### Final Dataset Architecture
+
+  * 1st part: MDA rules info:
+    a) rules fired during the last quote that binded into the policy of interest
+    b) all rules fired during preceded quotation period
+    c) all rules for all linked past policies
+  
+  * 2nd part: quotation period
+    a) # of quotations for the specific policy
+    c) total prior quotes
+    d) quote manipulation
+    e) total prior quote manipulation
+    f) quotation period and average quoatation period
+    
+  * 3rd part: specific policy info
+    a) number of drivers
+  
+  * 4th part: historical data
+    a) OED
+    b) time with company
+    c) count of prior policies
+    d) time since last policy purchase
+    e) past cancellations
+    f) average duration
+    g) clu drv/veh prior
+    h) siu prior count
+    i) "TOTAL_ACCIDENTS" 
+    j) "TOTAL_VIOLATIONS"/"TOTAL_MVR"
+    k) "AGG_ID"
+    l) "RISKGROUP_EXT"   
+    m) "RISKTIER_EXT"
+    n) "AGE"
+    o) "GENDER2"
+    p) "STATE.GROUP"     
+    q) "vehcnt" 
+    r) "Premium_Written"
+    s) "prior"           
+    
+    
+```{r}
+## 1st part: MDA rules
+data_1 <- idF[,c(4,11:22,25:36,38:49)]
+## 2nd part: Quotation
+data_2 <- idF[,c(2,4,5,23,24,56,57,58,59)] %>%
+  arrange(principal_id,transaction_date) %>%
+  group_by(principal_id) %>%
+  mutate_at(vars(quotes_per_quotation_period, QM_DD, QM_DA, QM_DV, QM_SC), list(prior = function(x, na.rm = FALSE) cumsum(x))) %>%
+  mutate(past_average_quotation_period = round(cumsum(quotation_period_length)/row_number(),2)) %>%
+  ungroup() %>%
+  select(2,5,10,4,15,6:9,11:14)
+
+data_3 <- idF[,c(4,7)] 
+
+data_4 <- idF[,c(4, 55, 51,53,52,64,65,66)]%>%
+  left_join(clu[,c(2,6,7)], by = "policy_number") %>%
+  left_join(siu[,c(2,5)], by = "policy_number") %>%
+  rename(siu_count_prior = prior) %>%
+  left_join(other[,c(2,4:15)], by = "policy_number") %>%
+  rename(premium_written_prior = prior)
+
+data_5 <- claims[,c(4:7, 2, 9:24)]
+
+data_original <- data_5 %>%
+  left_join(data_2, by = "policy_number") %>%
+  left_join(data_3, by = "policy_number") %>%
+  left_join(data_4, by = "policy_number") %>%
+  left_join(data_1, by = "policy_number") 
+
+rm(list=setdiff(ls(), "data_original"))
+str(data_original)
+data_original$quotes_per_quotation_period <- as.numeric(data_original$quotes_per_quotation_period)
+data_original$quotes_per_quotation_period_prior <- as.numeric(data_original$quotes_per_quotation_period_prior)
+data_original$number_of_drivers <- as.numeric(data_original$number_of_drivers)
+data_original$RISKGROUP_EXT  = as.numeric(as.character(plyr::mapvalues(data_original$RISKGROUP_EXT, from=c(NA, "B10", "B20", "B30", "C10", "C20" ,"C30", "D10", "D20", "D30"), to = c('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'))))
+data_original$OED_period <- as.character(data_original$OED_period)
+data_original$GENDER2  = as.numeric(as.character(plyr::mapvalues(data_original$GENDER2, from=c(NA, "O", "F", "M"), to = c('0', '1', '2', '3'))))
+data_original$STATE.GROUP  = as.numeric(as.character(plyr::mapvalues(data_original$STATE.GROUP, from=c(NA, "A", "B", "C"), to = c('0', '1', '2', '3'))))
+data_original$target <- ifelse(data_original$early_claims_count>0,"X.1","X.0")
+data_original <- data_original[,c(1:5,93,6:92)]
+data <- data_original[,c(6:93)]
+
+data$OED_period <- NULL
+str(data)
+data$aggregator_organic <- as.numeric(ifelse(data$AGG_ID=="Other",1,0))
+data$AGG_ID <- NULL
+data_original$GENDER2  = as.numeric(as.character(plyr::mapvalues(data_original$GENDER2, from=c(NA, "O", "F", "M"), to = c('0', '1', '2', '3'))))
+data <- na.omit(data)
+save.image("A_data_prep.RData")
+summary(data)
+```
+
+

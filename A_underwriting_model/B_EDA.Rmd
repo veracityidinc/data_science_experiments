@@ -1,0 +1,85 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+rm(list = ls())
+knitr::opts_chunk$set(message=FALSE, warning = FALSE)
+## Download, install in HDD (if not already) and load (in RAM) the following required packages (libraries)
+## Assign to a list the string names of required packages
+list.of.packages <- c("RcppRoll",
+                      "ggthemes",
+                      "tidyquant",
+                      "corrr",
+                      "tidyverse", 
+                      "lubridate")   
+   
+## Check list of required packages against alreday "instralled.packages" to decypher which (if any) should be downloaded and installed
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+## if indeed new packages list is not empty proceed in downloading missing packages
+if(length(new.packages)) install.packages(new.packages)
+
+## Load all necessary packages
+lapply(list.of.packages, require, character.only = TRUE)  
+load("~/Projects/A.VeracityID/Project_26_scores/A_data_preparation.RData")
+```
+
+```{r}
+data$target_num <- as.numeric(ifelse(data$target=="X.1",1,0))
+corr_analysis <- data[c(88,2:87)] %>%
+  corrr::correlate()             %>%
+  focus(target_num)                   %>%
+  na.omit() %>%
+  rename(feature = rowname)      %>%
+  mutate(target_num = round(target_num, 3))%>%
+  arrange(target_num)                
+
+
+# The palette with grey:
+cbp1 <- c( "#CCCC66", "#CC99CC", "#66CCFF","#CC6666", "#9999CC", "#66CC99" )
+
+          
+     # Correlation visualization
+     corr_analysis %>%
+       ggplot(aes(x = target_num, y = fct_reorder(feature, desc(target_num)))) +
+       geom_point() +
+       # Positive Correlations - Contribute to churn
+       geom_segment(aes(xend = 0, yend = feature),
+                    color = cbp1[1],
+                   data = corr_analysis %>% filter(target_num > 0)) +
+       geom_point(color = cbp1[1],#palette_light()[[2]],
+                  data = corr_analysis %>% filter(target_num > 0)) +
+       # Negative Correlations - Prevent churn
+       geom_segment(aes(xend = 0, yend = feature),
+                    color = cbp1[2],
+                    data = corr_analysis %>% filter(target_num < 0)) +
+       geom_point(color = cbp1[2],
+                  data = corr_analysis %>% filter(target_num < 0)) +
+       # Vertical lines
+       geom_vline(xintercept = 0,     color = palette_light()[[5]], size = 1, linetype = 2) +
+       geom_vline(xintercept = -0.2,  color = palette_light()[[5]], size = 1, linetype = 2) +
+       geom_vline(xintercept = 0.2,   color = palette_light()[[5]], size = 1, linetype = 2) +
+    #   # Aesthetics
+       theme_tq() +
+       theme(text = element_text(size=10)) + 
+       labs(title    = "Losses within first 2 months of Policy's life - Correlation Analysis",
+            subtitle = "Negative Correlations (prevent Losses - in green color), Positive Correlations (contribute to Losses - in red color)",
+            y        = "Feature Importance")
+
+```
+
+```{r}
+t.test(data[data$target=="X.1",]$Premium_Written, data[data$target=="X.0",]$Premium_Written)
+
+ggplot(data, aes(x = , fill = )) +
+  geom_density(alpha = .3) +
+  labs(title = "Diagnosis of Heart Disease ~ Resting blood pressure",
+       fill = "Diagnosis of Heart Disease (0 No - 1 Yes)")              +
+  xlab("Resting blood pressure")       
+```
+
+```{r}
+
+
+```
